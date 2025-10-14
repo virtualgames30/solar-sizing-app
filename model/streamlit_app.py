@@ -3,17 +3,52 @@ import pandas as pd
 import numpy as np
 import math
 from math import ceil
-from fpdf import FPDF
+from fpdf import FPDF # Assuming this is the older fpdf or fpdf2
 import io
+
+# ---------------------------
+# 0) UTILITY FUNCTIONS (Defined first to prevent "is not defined" errors)
+# ---------------------------
+
+def sanitize_text(text):
+    """
+    Replace unsupported Unicode symbols with ASCII equivalents
+    so fpdf (which uses Latin-1) can encode them safely, and handle NaN/None.
+    """
+    if pd.isna(text) or text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+        
+    replacements = {
+        "≥": ">=",
+        "≤": "<=",
+        "°": " deg",
+        "Ω": " ohm",
+        "µ": "u",
+        "×": "x",
+        "–": "-",  # en dash
+        "—": "-",  # em dash
+        "✔": "[OK]",
+        "✘": "[X]",
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text
 
 # ---------------------------
 # Page setup
 # ---------------------------
 st.set_page_config(page_title="Solar System Sizing + Critical Load", layout="wide")
 st.title("🔆 Solar System Sizing Calculator (Full + Critical Load)")
-#st.caption("Unified version combining sizing, module selection, and PDF export")
 
-st.markdown("---")
+
+st.info(
+    "⚠️ **Disclaimer:** This tool provides a professional estimate and all calculations are for planning purposes only. "
+    "A **certified professional** must perform an on-site evaluation to ensure your final solar system design is safe, efficient, and compliant with all local regulations."
+) 
+
+st.markdown("------")
 
 # ---------------------------
 # 1) Appliance input with critical load flag
@@ -242,70 +277,61 @@ bom = {
         f"PV panels ({preferred_panel_w} W)",
         f"Battery modules ({preferred_batt_ah} Ah @ {system_voltage} V)",
         "MPPT Charge Controller",
-        "Inverter (pure sine)",
-        "Cables, Breakers, Mounting, Fuses"
+        "Inverter (pure sinewave)",
+        "Cables, Breakers,Fuses"
     ],
     "Qty (Full)": [
         num_panels_full,
         num_batt_full,
         1,
         1,
-        1
+        '- '
     ],
     "Qty (Critical)": [
         num_panels_crit,
         num_batt_crit,
         1,
         1,
-        1
+        '- '
     ],
     "Notes": [
-        "Check Voc, string arrangement",
-        "Series/parallel per system voltage, include BMS for lithium",
-        f"Must support >= {controller_current}A, check voltage window",
-        f"Continuous ≥ {inverter_continuous}W, surge ≥ {inverter_surge}W",
+        "Verify Voc (Open Circuit Voltage) and optimize string configuration.",
+        "Configure series/parallel groups to match system voltage. A dedicated Battery Management System (BMS) is mandatory for Li-ion/LiFePO4.",
+        f"MPPT current rating must be > {controller_current}A. Verify maximum array Voc is within the controller's input voltage window.",
+        f"Inverter continuous power rating must be > {inverter_continuous}W. Required surge capacity: {inverter_surge}W.",
         "Use correctly sized cables, DC breakers, fuses per local code"
     ]
 }
 bom_df = pd.DataFrame(bom)
-st.dataframe(bom_df, use_container_width=True)
+st.dataframe(
+    bom_df,
+    use_container_width=True,
+    height=450, # Set height to give space for wrapped text
+    row_height=80,
+    column_config={
+        "Notes": st.column_config.Column(
+            "Notes",
+            # Set the desired width (e.g., 200 pixels or use 'auto')
+            width=200, 
+            # Make the text visible without truncation (optional, but good practice)
+            help="Technical specifications and installation checks.")
+    }
+)
 
-csv = bom_df.to_csv(index=False).encode("utf-8")
+
+# Apply the sanitizer to the relevant columns of the BOM DataFrame before export
+bom_df_sanitized = bom_df.copy()
+bom_df_sanitized['Item'] = bom_df_sanitized['Item'].apply(sanitize_text)
+bom_df_sanitized['Notes'] = bom_df_sanitized['Notes'].apply(sanitize_text)
+csv = bom_df_sanitized.to_csv(index=False).encode("utf-8")
 st.download_button("Download BOM CSV", data=csv, file_name="solar_bom_full.csv", mime="text/csv")
 
 st.markdown("---")
 
+
 # ---------------------------
 # 5) PDF / Spec Sheet Export
 # ---------------------------
-
-from fpdf import FPDF
-import io
-
-# --- Text sanitizer to fix Unicode issues ---
-def sanitize_text(text):
-    """
-    Replace unsupported Unicode symbols with ASCII equivalents
-    so fpdf (which uses Latin-1) can encode them safely.
-    """
-    replacements = {
-        "≥": ">=",
-        "≤": "<=",
-        "°": " deg",
-        "Ω": " ohm",
-        "µ": "u",
-        "×": "x",
-        "–": "-",   # en dash
-        "—": "-",   # em dash
-        "✔": "[OK]",
-        "✘": "[X]",
-    }
-    if not isinstance(text, str):
-        text = str(text)
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    return text
-
 
 # --- PDF generator function ---
 def generate_pdf(loads_df, summary_lines, bom_df):
@@ -349,10 +375,10 @@ def generate_pdf(loads_df, summary_lines, bom_df):
     pdf.set_font("Arial", "", 11)
     for _, row in loads_df.iterrows():
         pdf.cell(60, 8, sanitize_text(row.get("name", "")), 1)
-        pdf.cell(25, 8, sanitize_text(row.get("power_w", "")), 1)
-        pdf.cell(20, 8, sanitize_text(row.get("qty", "")), 1)
-        pdf.cell(30, 8, sanitize_text(row.get("hours_per_day", "")), 1)
-        pdf.cell(30, 8, sanitize_text(round(row.get("energy_wh", 0), 2)), 1)
+        pdf.cell(25, 8, sanitize_text(f"{row.get('power_w', 0.0):.1f}"), 1) 
+        pdf.cell(20, 8, sanitize_text(str(int(row.get('qty', 0)))), 1)        
+        pdf.cell(30, 8, sanitize_text(f"{row.get('hours_per_day', 0.0):.1f}"), 1) 
+        pdf.cell(30, 8, sanitize_text(f"{round(row.get('energy_wh', 0), 0):.0f}"), 1) 
         pdf.cell(25, 8, sanitize_text(str(row.get("critical", ""))), 1, ln=True)
 
     pdf.cell(0, 10, "", ln=True)
@@ -362,17 +388,54 @@ def generate_pdf(loads_df, summary_lines, bom_df):
         pdf.set_font("Arial", "B", 14)
         pdf.cell(0, 10, "Recommended Bill of Materials:", ln=True)
         pdf.set_font("Arial", "B", 11)
-        pdf.cell(80, 8, "Item", 1)
-        pdf.cell(40, 8, "Qty (Full)", 1)
-        pdf.cell(40, 8, "Qty (Critical)", 1)
-        pdf.cell(30, 8, "Notes", 1, ln=True)
+        
+        # Define column widths (total width = 190 for A4 portrait page margins)
+        w_item, w_qty_f, w_qty_c, w_notes = 60, 25, 30, 75
+        
+        # Draw the header row
+        pdf.cell(w_item, 8, "Item", 1)
+        pdf.cell(w_qty_f, 8, "Qty (Full)", 1)
+        pdf.cell(w_qty_c, 8, "Qty (Critical)", 1)
+        pdf.cell(w_notes, 8, "Notes", 1, ln=True)
 
         pdf.set_font("Arial", "", 11)
+        
+        # Store initial x and y position for reliable repositioning
+        x_start = pdf.get_x()
+        
         for _, row in bom_df.iterrows():
-            pdf.cell(80, 8, sanitize_text(row.get("Item", "")), 1)
-            pdf.cell(40, 8, sanitize_text(row.get("Qty (Full)", "")), 1)
-            pdf.cell(40, 8, sanitize_text(row.get("Qty (Critical)", "")), 1)
-            pdf.cell(30, 8, sanitize_text(row.get("Notes", "")), 1, ln=True)
+            # Get the sanitized notes text
+            notes_text = sanitize_text(row.get("Notes", ""))
+            
+            # 1. Get current Y position (start of row)
+            y_start = pdf.get_y()
+            
+            # 2. Calculate the required height using multi_cell (dry run)
+            # Set position to the notes column starting position
+            pdf.set_xy(x_start + w_item + w_qty_f + w_qty_c, y_start) 
+            
+            # FIX: REMOVE 'ln=1' and use standard parameters
+            # The 'border', 'align', and 'fill' parameters are positional for older fpdf
+            pdf.multi_cell(w_notes, 4, notes_text, 0, 'L', False) 
+            cell_height = pdf.get_y() - y_start
+            
+            # 3. Reset position to start of row (using stored x_start)
+            pdf.set_xy(x_start, y_start) 
+            
+            # 4. Draw cells 1-3 with the determined height
+            pdf.cell(w_item, cell_height, sanitize_text(row.get("Item", "")), 1)
+            pdf.cell(w_qty_f, cell_height, sanitize_text(str(row.get("Qty (Full)", ""))), 1)
+            pdf.cell(w_qty_c, cell_height, sanitize_text(str(row.get("Qty (Critical)", ""))), 1)
+            
+            # 5. Draw the multi-line notes cell (last cell)
+            # Reset X, keep Y (same as step 2 starting position)
+            pdf.set_xy(pdf.get_x(), y_start)
+            
+            # FIX: REMOVE 'ln=True'
+            pdf.multi_cell(w_notes, 4, notes_text, 1, 'L', False)
+            # Advance to the next line manually after the multi_cell is finished
+            pdf.set_xy(x_start, y_start + cell_height) # Move to the start of the next row
+
 
     # --- Output as bytes (safe for all FPDF versions) ---
     pdf_result = pdf.output(dest="S")
@@ -384,8 +447,6 @@ def generate_pdf(loads_df, summary_lines, bom_df):
         pdf_bytes = bytes(pdf_result)  # for bytearray (newer versions)
 
     return pdf_bytes
-
-
 
 
 # Prepare summary lines
