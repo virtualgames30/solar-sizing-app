@@ -4,6 +4,7 @@ import numpy as np
 import math
 from math import ceil
 from fpdf import FPDF
+import io
 
 # ---------------------------
 # Page setup
@@ -267,61 +268,107 @@ st.markdown("---")
 # 5) PDF / Spec Sheet Export
 # ---------------------------
 
-def generate_pdf(loads_df, summary_text_lines, bom_df):
-    class PDF(FPDF):
-        def footer(self):
-            # Move to 1.5 cm from bottom
-            self.set_y(-15)
-            self.set_font("Arial", "I", 9)
-            self.set_text_color(100)
-            # Footer text — personalized brand mark
-            self.cell(
-                0, 10,
-                "Designed by OMOWAYE JOSHUA ⚡ | Empowering Energy Intelligence",
-                align="C"
-            )
+from fpdf import FPDF
+import io
 
-    pdf = PDF()
+# --- Text sanitizer to fix Unicode issues ---
+def sanitize_text(text):
+    """
+    Replace unsupported Unicode symbols with ASCII equivalents
+    so fpdf (which uses Latin-1) can encode them safely.
+    """
+    replacements = {
+        "≥": ">=",
+        "≤": "<=",
+        "°": " deg",
+        "Ω": " ohm",
+        "µ": "u",
+        "×": "x",
+        "–": "-",   # en dash
+        "—": "-",   # em dash
+        "✔": "[OK]",
+        "✘": "[X]",
+    }
+    if not isinstance(text, str):
+        text = str(text)
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text
+
+
+# --- PDF generator function ---
+def generate_pdf(loads_df, summary_lines, bom_df):
+    """
+    Generate a PDF summary report containing:
+    - Summary lines (solar system specs)
+    - Load table
+    - Bill of Materials (BOM)
+    Returns PDF bytes for Streamlit download button.
+    """
+
+    pdf = FPDF()
     pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Smart Solar System Sizing Report", ln=True, align="C")
 
-    # Title
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 10, "", ln=True)
+
+    # --- Summary Section ---
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Solar System Sizing Report", ln=True, align="C")
-    pdf.ln(5)
+    pdf.cell(0, 10, "System Summary:", ln=True)
+    pdf.set_font("Arial", "", 12)
+    for line in summary_lines:
+        pdf.multi_cell(0, 8, sanitize_text(line))
 
-    # Section 1: Appliance / Load List
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Appliance / Load List", ln=True)
-    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 10, "", ln=True)
+
+    # --- Load Table Section ---
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Appliance Load Summary:", ln=True)
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(60, 8, "Appliance", 1)
+    pdf.cell(25, 8, "Power (W)", 1)
+    pdf.cell(20, 8, "Qty", 1)
+    pdf.cell(30, 8, "Hours/day", 1)
+    pdf.cell(30, 8, "Energy (Wh)", 1)
+    pdf.cell(25, 8, "Critical", 1, ln=True)
+
+    pdf.set_font("Arial", "", 11)
     for _, row in loads_df.iterrows():
-        crit = " (Critical)" if row.get("critical", False) else ""
-        pdf.cell(0, 7, f"{row['name']}: {row['power_w']} W × {row['qty']} × {row['hours_per_day']} h {crit}", ln=True)
+        pdf.cell(60, 8, sanitize_text(row.get("appliance", "")), 1)
+        pdf.cell(25, 8, sanitize_text(row.get("power_w", "")), 1)
+        pdf.cell(20, 8, sanitize_text(row.get("qty", "")), 1)
+        pdf.cell(30, 8, sanitize_text(row.get("hours_per_day", "")), 1)
+        pdf.cell(30, 8, sanitize_text(round(row.get("energy_wh", 0), 2)), 1)
+        pdf.cell(25, 8, sanitize_text(str(row.get("critical", ""))), 1, ln=True)
 
-    pdf.ln(4)
+    pdf.cell(0, 10, "", ln=True)
 
-    # Section 2: System Summary
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "System Summary", ln=True)
-    pdf.set_font("Arial", "", 10)
-    for line in summary_text_lines:
-        pdf.cell(0, 7, line, ln=True)
+    # --- Bill of Materials (BOM) Section ---
+    if bom_df is not None and not bom_df.empty:
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, "Recommended Bill of Materials:", ln=True)
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(80, 8, "Item", 1)
+        pdf.cell(40, 8, "Specification", 1)
+        pdf.cell(30, 8, "Qty", 1)
+        pdf.cell(40, 8, "Remarks", 1, ln=True)
 
-    pdf.ln(4)
+        pdf.set_font("Arial", "", 11)
+        for _, row in bom_df.iterrows():
+            pdf.cell(80, 8, sanitize_text(row.get("Item", "")), 1)
+            pdf.cell(40, 8, sanitize_text(row.get("Specification", "")), 1)
+            pdf.cell(30, 8, sanitize_text(row.get("Qty", "")), 1)
+            pdf.cell(40, 8, sanitize_text(row.get("Remarks", "")), 1, ln=True)
 
-    # Section 3: Bill of Materials
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Bill of Materials (BOM)", ln=True)
-    pdf.set_font("Arial", "", 10)
-    for _, row in bom_df.iterrows():
-        pdf.multi_cell(
-            0, 7,
-            f"{row['Item']}: Full qty = {row['Qty (Full)']}, "
-            f"Critical qty = {row['Qty (Critical)']}. "
-            f"Note: {row['Notes']}"
-        )
+    # --- Output as Bytes (for Streamlit download) ---
+    pdf_output = io.BytesIO()
+    pdf_bytes = pdf.output(dest="S")  # safe encode
+    pdf_output.write(pdf_bytes)
+    return pdf_output.getvalue()
 
-    # ✅ Fixed return — compatible with FPDF2
-    return bytes(pdf.output(dest="S"))
 
 
 
