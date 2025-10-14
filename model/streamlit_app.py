@@ -119,6 +119,17 @@ else:
     loads["energy_wh"] = 0.0
 
 E_total = loads["energy_wh"].sum()
+# Ensure the 'critical' column is boolean and has no NaN values
+if "critical" in loads.columns:
+    loads["critical"] = loads["critical"].fillna(False)
+    # If user entered strings like "Yes"/"No" or "True"/"False"
+    loads["critical"] = loads["critical"].astype(str).str.lower().map({
+        'true': True, 'yes': True, '1': True,
+        'false': False, 'no': False, '0': False 
+    }).fillna(False)
+else:
+    loads["critical"] = False  # fallback if column missing
+
 E_critical = loads.loc[loads["critical"], "energy_wh"].sum()
 
 # Function to compute required PV size ignoring losses:
