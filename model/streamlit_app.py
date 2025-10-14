@@ -165,6 +165,7 @@ if usable_module_wh > 0:
 else:
     num_batt_full = num_batt_crit = 0
 
+
 # Panel count
 if preferred_panel_w > 0:
     num_panels_full = ceil(pv_watts_full / preferred_panel_w)
@@ -172,16 +173,26 @@ if preferred_panel_w > 0:
 else:
     num_panels_full = num_panels_crit = 0
 
+
 # Inverter sizing: pick worst-case continuous and surge
 if not loads.empty:
     continuous_load = (loads["power_w"] * loads["qty"]).sum()
-    surge_load = max(loads["surge_w"].max(), continuous_load)
+    # Calculate the max single-appliance surge above its continuous power
+    # Handle the case where surge_w might be less than power_w (or 0) by taking max(0, diff)
+    loads['net_surge'] = loads.apply(
+        lambda row: max(0, row['surge_w'] - (row['power_w'] * row['qty'])), axis=1
+    )
+    max_net_surge = loads['net_surge'].max()
+    
+    # Required surge capacity = Total Continuous Load + Max Net Surge from a single device
+    # We use inverter_surge here directly
+    inverter_surge = ceil(continuous_load + max_net_surge)
 else:
     continuous_load = 0.0
-    surge_load = 0.0
+    # Set inverter_surge to 0.0 directly when no loads exist
+    inverter_surge = 0.0 
 
 inverter_continuous = ceil(continuous_load * 1.25)
-inverter_surge = surge_load
 
 # Charge controller sizing (for full)
 if system_voltage > 0:
