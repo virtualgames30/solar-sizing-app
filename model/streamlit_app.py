@@ -337,7 +337,7 @@ def generate_pdf(loads_df, summary_lines, bom_df):
 
     pdf.set_font("Arial", "", 11)
     for _, row in loads_df.iterrows():
-        pdf.cell(60, 8, sanitize_text(row.get("appliance", "")), 1)
+        pdf.cell(60, 8, sanitize_text(row.get("name", "")), 1)
         pdf.cell(25, 8, sanitize_text(row.get("power_w", "")), 1)
         pdf.cell(20, 8, sanitize_text(row.get("qty", "")), 1)
         pdf.cell(30, 8, sanitize_text(row.get("hours_per_day", "")), 1)
@@ -352,22 +352,27 @@ def generate_pdf(loads_df, summary_lines, bom_df):
         pdf.cell(0, 10, "Recommended Bill of Materials:", ln=True)
         pdf.set_font("Arial", "B", 11)
         pdf.cell(80, 8, "Item", 1)
-        pdf.cell(40, 8, "Specification", 1)
-        pdf.cell(30, 8, "Qty", 1)
-        pdf.cell(40, 8, "Remarks", 1, ln=True)
+        pdf.cell(40, 8, "Qty (Full)", 1)
+        pdf.cell(40, 8, "Qty (Critical)", 1)
+        pdf.cell(30, 8, "Notes", 1, ln=True)
 
         pdf.set_font("Arial", "", 11)
         for _, row in bom_df.iterrows():
             pdf.cell(80, 8, sanitize_text(row.get("Item", "")), 1)
-            pdf.cell(40, 8, sanitize_text(row.get("Specification", "")), 1)
-            pdf.cell(30, 8, sanitize_text(row.get("Qty", "")), 1)
-            pdf.cell(40, 8, sanitize_text(row.get("Remarks", "")), 1, ln=True)
+            pdf.cell(40, 8, sanitize_text(row.get("Qty (Full)", "")), 1)
+            pdf.cell(40, 8, sanitize_text(row.get("Qty (Critical)", "")), 1)
+            pdf.cell(30, 8, sanitize_text(row.get("Notes", "")), 1, ln=True)
 
-    # --- Output as Bytes (for Streamlit download) ---
-    pdf_output = io.BytesIO()
-    pdf_bytes = pdf.output(dest="S")  # safe encode
-    pdf_output.write(pdf_bytes)
-    return pdf_output.getvalue()
+    # --- Output as bytes (safe for all FPDF versions) ---
+    pdf_result = pdf.output(dest="S")
+
+    # Handle string or bytearray automatically
+    if isinstance(pdf_result, str):
+        pdf_bytes = pdf_result.encode("latin-1")  # older FPDF versions
+    else:
+        pdf_bytes = bytes(pdf_result)  # for bytearray (newer versions)
+
+    return pdf_bytes
 
 
 
