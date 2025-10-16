@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import math
 from math import ceil
-from fpdf import FPDF # Assuming this is the older fpdf or fpdf2
+from fpdf import FPDF  # Assuming this is the older fpdf or fpdf2
 import io
 
 # ---------------------------
@@ -336,28 +336,29 @@ st.markdown("---")
 # --- PDF generator function ---
 def generate_pdf(loads_df, summary_lines, bom_df):
     """
-    Generate a PDF summary report containing:
-    - Summary lines (solar system specs)
-    - Load table
-    - Bill of Materials (BOM)
-    Returns PDF bytes for Streamlit download button.
+    Generate a PDF summary report...
     """
 
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Header
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, "Smart Solar System Sizing Report", ln=True, align="C")
 
     pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, "", ln=True)
+    pdf.cell(0, 10, "", ln=True) # Blank line
 
-    # --- Summary Section ---
+    # --- Summary Section (FINAL FIX APPLIED HERE) ---
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "System Summary:", ln=True)
+    pdf.cell(0, 10, "System Summary:", ln=True) 
+    
     pdf.set_font("Arial", "", 12)
+    
+    # Use pdf.cell(..., ln=True) for summary lines. This avoids the complex, bug-prone line-breaking logic of multi_cell.
     for line in summary_lines:
-        pdf.multi_cell(0, 8, sanitize_text(line))
+        pdf.cell(0, 8, sanitize_text(line), ln=True) # <-- FIX: Replaced multi_cell with cell
 
     pdf.cell(0, 10, "", ln=True)
 
@@ -365,6 +366,8 @@ def generate_pdf(loads_df, summary_lines, bom_df):
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Appliance Load Summary:", ln=True)
     pdf.set_font("Arial", "B", 11)
+    
+    # Table Header
     pdf.cell(60, 8, "Appliance", 1)
     pdf.cell(25, 8, "Power (W)", 1)
     pdf.cell(20, 8, "Qty", 1)
@@ -389,7 +392,7 @@ def generate_pdf(loads_df, summary_lines, bom_df):
         pdf.cell(0, 10, "Recommended Bill of Materials:", ln=True)
         pdf.set_font("Arial", "B", 11)
         
-        # Define column widths (total width = 190 for A4 portrait page margins)
+        # Define column widths 
         w_item, w_qty_f, w_qty_c, w_notes = 60, 25, 30, 75
         
         # Draw the header row
@@ -400,54 +403,42 @@ def generate_pdf(loads_df, summary_lines, bom_df):
 
         pdf.set_font("Arial", "", 11)
         
-        # Store initial x and y position for reliable repositioning
-        x_start = pdf.get_x()
+        x_start = pdf.l_margin
         
         for _, row in bom_df.iterrows():
-            # Get the sanitized notes text
             notes_text = sanitize_text(row.get("Notes", ""))
             
-            # 1. Get current Y position (start of row)
             y_start = pdf.get_y()
             
-            # 2. Calculate the required height using multi_cell (dry run)
-            # Set position to the notes column starting position
+            # Dry run: calculate required height in the notes column
             pdf.set_xy(x_start + w_item + w_qty_f + w_qty_c, y_start) 
-            
-            # FIX: REMOVE 'ln=1' and use standard parameters
-            # The 'border', 'align', and 'fill' parameters are positional for older fpdf
-            pdf.multi_cell(w_notes, 4, notes_text, 0, 'L', False) 
+            pdf.multi_cell(w_notes, 4, notes_text, 0, 'L') 
             cell_height = pdf.get_y() - y_start
+            cell_height = max(8, cell_height) 
             
-            # 3. Reset position to start of row (using stored x_start)
+            # Draw cells 1-3
             pdf.set_xy(x_start, y_start) 
-            
-            # 4. Draw cells 1-3 with the determined height
             pdf.cell(w_item, cell_height, sanitize_text(row.get("Item", "")), 1)
             pdf.cell(w_qty_f, cell_height, sanitize_text(str(row.get("Qty (Full)", ""))), 1)
             pdf.cell(w_qty_c, cell_height, sanitize_text(str(row.get("Qty (Critical)", ""))), 1)
             
-            # 5. Draw the multi-line notes cell (last cell)
-            # Reset X, keep Y (same as step 2 starting position)
+            # Draw multi-line notes cell
             pdf.set_xy(pdf.get_x(), y_start)
-            
-            # FIX: REMOVE 'ln=True'
             pdf.multi_cell(w_notes, 4, notes_text, 1, 'L', False)
-            # Advance to the next line manually after the multi_cell is finished
-            pdf.set_xy(x_start, y_start + cell_height) # Move to the start of the next row
+            
+            # Advance to the start of the next row
+            pdf.set_xy(x_start, y_start + cell_height) 
 
 
     # --- Output as bytes (safe for all FPDF versions) ---
     pdf_result = pdf.output(dest="S")
 
-    # Handle string or bytearray automatically
     if isinstance(pdf_result, str):
-        pdf_bytes = pdf_result.encode("latin-1")  # older FPDF versions
+        pdf_bytes = pdf_result.encode("latin-1")
     else:
-        pdf_bytes = bytes(pdf_result)  # for bytearray (newer versions)
+        pdf_bytes = bytes(pdf_result)
 
     return pdf_bytes
-
 
 # Prepare summary lines
 summary_lines = [
