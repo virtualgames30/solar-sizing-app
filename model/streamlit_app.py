@@ -3,8 +3,9 @@ import pandas as pd
 import numpy as np
 import math
 from math import ceil
-from fpdf import FPDF  # Assuming this is the older fpdf or fpdf2
+from fpdf import FPDF
 import io
+import matplotlib.pyplot as plt
 
 # ---------------------------
 # 0) UTILITY FUNCTIONS (Defined first to prevent "is not defined" errors)
@@ -16,6 +17,7 @@ def sanitize_text(text):
     so fpdf (which uses Latin-1) can encode them safely, and handle NaN/None.
     """
     if pd.isna(text) or text is None:
+        # Ensure no None/NaN reaches fpdf, replace with an empty string
         return ""
     if not isinstance(text, str):
         text = str(text)
@@ -27,14 +29,56 @@ def sanitize_text(text):
         "Ω": " ohm",
         "µ": "u",
         "×": "x",
-        "–": "-",  # en dash
-        "—": "-",  # em dash
+        "–": "-",  
+        "—": "-", 
         "✔": "[OK]",
         "✘": "[X]",
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
     return text
+
+# FUNCTION TO CREATE THE CHART
+def create_and_save_chart(loads_df):
+    """
+    Creates a horizontal bar chart of the top 5 energy consumers
+    """
+    # 1. Filter and sort the data for charting. Ensure energy_wh is numeric and greater than zero
+    chart_data = loads_df.copy()
+    chart_data['energy_wh'] = pd.to_numeric(chart_data['energy_wh'], errors='coerce').fillna(0)
+    
+    chart_data = chart_data[chart_data['energy_wh'] > 0].sort_values(
+        by='energy_wh', ascending=False
+    ).head(5)
+
+    if chart_data.empty:
+        return None 
+
+    # 2. Create the Matplotlib figure
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    # Use log scale if numbers are extremely disparate
+    if chart_data['energy_wh'].min() > 0 and chart_data['energy_wh'].max() / chart_data['energy_wh'].min() > 100:
+        ax.barh(chart_data['name'], chart_data['energy_wh'], color='#1E88E5', log=True)
+        ax.set_xlabel('Daily Energy Consumption (Wh) [Log Scale]', fontsize=12)
+    else:
+        ax.barh(chart_data['name'], chart_data['energy_wh'], color='#1E88E5')
+        ax.set_xlabel('Daily Energy Consumption (Wh)', fontsize=12)
+        
+    ax.set_title('Top 5 Energy Consuming Appliances', fontsize=14, fontweight='bold')
+    ax.invert_yaxis()
+
+    # Customize appearance
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    
+    # 3. Save to in-memory buffer as JPEG
+    img_buffer = io.BytesIO()
+    fig.savefig(img_buffer, format='jpeg', bbox_inches='tight', dpi=150) 
+    plt.close(fig)
+    img_buffer.seek(0)
+    
+    return img_buffer.getvalue()
 
 # ---------------------------
 # Page setup
@@ -87,7 +131,7 @@ with st.form("add_load_form", clear_on_submit=True):
             ignore_index=True
         )
 
-# Editable table
+# Prepare Editable Table
 st.markdown("### Current loads (you can edit or delete rows)")
 edited = st.data_editor(
     st.session_state.appliances,
@@ -142,11 +186,21 @@ safety_margin = st.number_input("Safety margin (multiply PV)", min_value=1.0, ma
 st.markdown("---")
 
 # ---------------------------
-# 3) Computation logic
+# 3) Computation logic (MODIFIED CLEANUP)
 # ---------------------------
 
 # Copy loads for computation
 loads = st.session_state.appliances.copy()
+
+# Fix 1: Ensure 'name' is a string and handle nulls for Matplotlib/PDF
+loads["name"] = loads["name"].astype(str).replace(
+    {"None": "Unnamed Appliance", "nan": "Unnamed Appliance", "": "Unnamed Appliance"}
+)
+
+# Fix 2: Ensure all numerical columns are properly typed (not None/NaN).
+numeric_cols = ["power_w", "qty", "hours_per_day", "surge_w"]
+for col in numeric_cols:
+    loads[col] = pd.to_numeric(loads[col], errors='coerce').fillna(0.0)
 
 # Compute energies
 if not loads.empty:
@@ -212,8 +266,7 @@ else:
 # Inverter sizing: pick worst-case continuous and surge
 if not loads.empty:
     continuous_load = (loads["power_w"] * loads["qty"]).sum()
-    # Calculate the max single-appliance surge above its continuous power
-    # Handle the case where surge_w might be less than power_w (or 0) by taking max(0, diff)
+    # The cleanup above ensures 'surge_w', 'power_w', and 'qty' are numbers
     loads['net_surge'] = loads.apply(
         lambda row: max(0, row['surge_w'] - (row['power_w'] * row['qty'])), axis=1
     )
@@ -313,7 +366,7 @@ st.dataframe(
             "Notes",
             # Set the desired width (e.g., 200 pixels or use 'auto')
             width=200, 
-            # Make the text visible without truncation (optional, but good practice)
+            # Make the text visible without truncation
             help="Technical specifications and installation checks.")
     }
 )
@@ -333,10 +386,25 @@ st.markdown("---")
 # 5) PDF / Spec Sheet Export
 # ---------------------------
 
+# --- CHART GENERATION AND DISPLAY TOGGLE ---
+chart_image_bytes = create_and_save_chart(loads)
+
+st.subheader("PDF Generation & Graphical Summary")
+
+show_chart = st.checkbox("Show/Hide Graphical Summary (Top 5 Loads)", value=True, help="Toggle the bar chart visualization.")
+if show_chart:
+    if chart_image_bytes:
+        st.image(chart_image_bytes, caption="Top Energy Consuming Appliances (Wh/day)")
+    else:
+        st.info("No sufficient load data available to generate the energy consumption chart.")
+
+st.markdown("---")
+
+
 # --- PDF generator function ---
-def generate_pdf(loads_df, summary_lines, bom_df):
+def generate_pdf(loads_df, summary_lines, bom_df, chart_image_bytes): 
     """
-    Generate a PDF summary report...
+    Generate a PDF summary report including the chart image of Energy Consumption Appliances.
     """
 
     pdf = FPDF()
@@ -350,19 +418,36 @@ def generate_pdf(loads_df, summary_lines, bom_df):
     pdf.set_font("Arial", "", 12)
     pdf.cell(0, 10, "", ln=True) # Blank line
 
-    # --- Summary Section (FINAL FIX APPLIED HERE) ---
+    # --- CHART EMBEDDING SECTION ---
+    if chart_image_bytes:
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, "Load Consumption Chart:", ln=True)
+        pdf.cell(0, 5, "", ln=True)
+        
+        # Prepare BytesIO object for fpdf.image
+        img_io = io.BytesIO(chart_image_bytes)
+        
+        # image placement and size (140mm width, centered)
+        image_w = 140
+        x_center = (pdf.w - image_w) / 2
+        
+        # Image type is explicitly set to JPEG for clarity.
+        pdf.image(img_io, x=x_center, w=image_w, type='JPEG')
+        pdf.cell(0, 5, "", ln=True) # Spacer after image
+        pdf.cell(0, 5, "", ln=True) 
+    
+    # --- SUMMARY SECTION ---
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "System Summary:", ln=True) 
     
     pdf.set_font("Arial", "", 12)
     
-    # Use pdf.cell(..., ln=True) for summary lines. This avoids the complex, bug-prone line-breaking logic of multi_cell.
     for line in summary_lines:
-        pdf.cell(0, 8, sanitize_text(line), ln=True) # <-- FIX: Replaced multi_cell with cell
+        pdf.cell(0, 8, sanitize_text(line), ln=True) 
 
     pdf.cell(0, 10, "", ln=True)
 
-    # --- Load Table Section ---
+    # --- LOAD TABLE SECTION ---
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Appliance Load Summary:", ln=True)
     pdf.set_font("Arial", "B", 11)
@@ -410,7 +495,7 @@ def generate_pdf(loads_df, summary_lines, bom_df):
             
             y_start = pdf.get_y()
             
-            # Dry run: calculate required height in the notes column
+            # calculate required height in the notes column
             pdf.set_xy(x_start + w_item + w_qty_f + w_qty_c, y_start) 
             pdf.multi_cell(w_notes, 4, notes_text, 0, 'L') 
             cell_height = pdf.get_y() - y_start
@@ -440,17 +525,19 @@ def generate_pdf(loads_df, summary_lines, bom_df):
 
     return pdf_bytes
 
-# Prepare summary lines
+
+# PREPARE SUMMARY LINES
 summary_lines = [
     f"System Voltage: {system_voltage} V",
     f"Battery Chemistry: {battery_chem}",
     f"Preferred Battery Module: {preferred_batt_ah} Ah",
     f"Preferred PV Module: {preferred_panel_w} W",
     f"Inverter continuous: {inverter_continuous} W, Surge: {inverter_surge} W",
-    f"Controller current: {controller_current} A"
+    f"Charge Controller current: {controller_current} A"
 ]
 
-pdf_bytes = generate_pdf(loads, summary_lines, bom_df)
+
+pdf_bytes = generate_pdf(loads, summary_lines, bom_df, chart_image_bytes)
 st.download_button("Download Spec Sheet (PDF)", data=pdf_bytes, file_name="solar_spec_full.pdf", mime="application/pdf")
 
 st.success("✅ All done. Use the BOM table, tweak as needed, and hand the spec sheet to installers or vendors.")
