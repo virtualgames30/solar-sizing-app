@@ -3,82 +3,10 @@ import pandas as pd
 import numpy as np
 import math
 from math import ceil
-from fpdf import FPDF
-import io
-import matplotlib.pyplot as plt
 
-# ---------------------------
-# 0) UTILITY FUNCTIONS (Defined first to prevent "is not defined" errors)
-# ---------------------------
-
-def sanitize_text(text):
-    """
-    Replace unsupported Unicode symbols with ASCII equivalents
-    so fpdf (which uses Latin-1) can encode them safely, and handle NaN/None.
-    """
-    if pd.isna(text) or text is None:
-        # Ensure no None/NaN reaches fpdf, replace with an empty string
-        return ""
-    if not isinstance(text, str):
-        text = str(text)
-        
-    replacements = {
-        "≥": ">=",
-        "≤": "<=",
-        "°": " deg",
-        "Ω": " ohm",
-        "µ": "u",
-        "×": "x",
-        "–": "-",  
-        "—": "-", 
-        "✔": "[OK]",
-        "✘": "[X]",
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    return text
-
-# FUNCTION TO CREATE THE CHART
-def create_and_save_chart(loads_df):
-    """
-    Creates a horizontal bar chart of the top 5 energy consumers
-    """
-    # 1. Filter and sort the data for charting. Ensure energy_wh is numeric and greater than zero
-    chart_data = loads_df.copy()
-    chart_data['energy_wh'] = pd.to_numeric(chart_data['energy_wh'], errors='coerce').fillna(0)
-    
-    chart_data = chart_data[chart_data['energy_wh'] > 0].sort_values(
-        by='energy_wh', ascending=False
-    ).head(5)
-
-    if chart_data.empty:
-        return None 
-
-    # 2. Create the Matplotlib figure
-    fig, ax = plt.subplots(figsize=(8, 5))
-    
-    # Use log scale if numbers are extremely disparate
-    if chart_data['energy_wh'].min() > 0 and chart_data['energy_wh'].max() / chart_data['energy_wh'].min() > 100:
-        ax.barh(chart_data['name'], chart_data['energy_wh'], color='#1E88E5', log=True)
-        ax.set_xlabel('Daily Energy Consumption (Wh) [Log Scale]', fontsize=12)
-    else:
-        ax.barh(chart_data['name'], chart_data['energy_wh'], color='#1E88E5')
-        ax.set_xlabel('Daily Energy Consumption (Wh)', fontsize=12)
-        
-    ax.set_title('Top 5 Energy Consuming Appliances', fontsize=14, fontweight='bold')
-    ax.invert_yaxis()
-
-    # Customize appearance
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    
-    # 3. Save to in-memory buffer as JPEG
-    img_buffer = io.BytesIO()
-    fig.savefig(img_buffer, format='jpeg', bbox_inches='tight', dpi=150) 
-    plt.close(fig)
-    img_buffer.seek(0)
-    
-    return img_buffer.getvalue()
+# Import the helper modules
+from utils import sanitize_text, create_and_save_chart, recommended_system, battery_req
+from pdf_generator import generate_pdf
 
 # ---------------------------
 # Page setup
@@ -86,12 +14,11 @@ def create_and_save_chart(loads_df):
 st.set_page_config(page_title="Solar System Sizing + Critical Load", layout="wide")
 st.title("🔆 Solar System Sizing Calculator (Full + Critical Load)")
 
-
 st.info(
     "⚠️ **Disclaimer:** This tool provides a professional estimate and all calculations are for planning purposes only. "
     "A **certified professional** must perform an on-site evaluation to ensure your final solar system design is safe, efficient, and compliant with all local regulations."
 ) 
-
+ 
 st.markdown("------")
 
 # ---------------------------
@@ -136,7 +63,7 @@ st.markdown("### Current loads (you can edit or delete rows)")
 edited = st.data_editor(
     st.session_state.appliances,
     num_rows="dynamic",
-    use_container_width=True
+    use_container_width=True # This is correct for st.data_editor
 )
 st.session_state.appliances = edited.copy()
 
@@ -186,7 +113,7 @@ safety_margin = st.number_input("Safety margin (multiply PV)", min_value=1.0, ma
 st.markdown("---")
 
 # ---------------------------
-# 3) Computation logic (MODIFIED CLEANUP)
+# 3) Computation logic
 # ---------------------------
 
 # Copy loads for computation
@@ -222,13 +149,7 @@ else:
 
 E_critical = loads.loc[loads["critical"], "energy_wh"].sum()
 
-# Function to compute required PV size ignoring losses:
-def recommended_system(E_wh, ps_h, eta_inv, eta_batt, eta_misc, safety):
-    E_from_panels = E_wh / (eta_inv * eta_batt)
-    pv_watts = E_from_panels / (ps_h * eta_misc)
-    pv_watts *= safety
-    return E_from_panels, pv_watts
-
+# Use the imported functions from utils.py to compute required PV size
 E_from_panels_full, pv_watts_full = recommended_system(
     E_total, ps_h, eta_inv, eta_batt_roundtrip, eta_misc, safety_margin
 )
@@ -236,16 +157,10 @@ E_from_panels_crit, pv_watts_crit = recommended_system(
     E_critical, ps_h, eta_inv, eta_batt_roundtrip, eta_misc, safety_margin
 )
 
-# Battery sizing function (nominal)
-def battery_req(E_wh, autonomy, eta_batt, Vsys):
-    wh = (E_wh * autonomy) / eta_batt
-    ah = wh / Vsys
-    return wh, ah
-
 bat_wh_full, bat_ah_full = battery_req(E_total, autonomy_days, eta_batt_roundtrip, system_voltage)
 bat_wh_crit, bat_ah_crit = battery_req(E_critical, autonomy_days, eta_batt_roundtrip, system_voltage)
 
-# Compute number of battery modules
+# Compute number of battery modules i.e. battery sizing 
 module_wh = preferred_batt_ah * system_voltage
 usable_module_wh = module_wh * usable_dod
 if usable_module_wh > 0:
@@ -254,14 +169,12 @@ if usable_module_wh > 0:
 else:
     num_batt_full = num_batt_crit = 0
 
-
 # Panel count
 if preferred_panel_w > 0:
     num_panels_full = ceil(pv_watts_full / preferred_panel_w)
     num_panels_crit = ceil(pv_watts_crit / preferred_panel_w)
 else:
     num_panels_full = num_panels_crit = 0
-
 
 # Inverter sizing: pick worst-case continuous and surge
 if not loads.empty:
@@ -271,13 +184,9 @@ if not loads.empty:
         lambda row: max(0, row['surge_w'] - (row['power_w'] * row['qty'])), axis=1
     )
     max_net_surge = loads['net_surge'].max()
-    
-    # Required surge capacity = Total Continuous Load + Max Net Surge from a single device
-    # We use inverter_surge here directly
     inverter_surge = ceil(continuous_load + max_net_surge)
 else:
     continuous_load = 0.0
-    # Set inverter_surge to 0.0 directly when no loads exist
     inverter_surge = 0.0 
 
 inverter_continuous = ceil(continuous_load * 1.25)
@@ -295,7 +204,6 @@ else:
 st.header("📊 Results & Recommendations")
 
 colA, colB = st.columns(2)
-
 with colA:
     st.metric("Total Energy Needed", f"{E_total:.0f} Wh/day")
     st.metric("Critical Load Energy", f"{E_critical:.0f} Wh/day")
@@ -314,7 +222,6 @@ with colB:
     st.write("### Full Load System")
     st.write(f"- PV size required: **{pv_watts_full:.0f} W** → {num_panels_full} × {preferred_panel_w} W modules")
     st.write(f"- Battery needed: **{bat_ah_full:.1f} Ah** nominal → {num_batt_full} × {preferred_batt_ah} Ah modules")
-
     st.write("---")
     st.write("### Critical Load (Backup) System")
     st.write(f"- PV size (crit): **{pv_watts_crit:.0f} W** → {num_panels_crit} × {preferred_panel_w} W")
@@ -338,14 +245,14 @@ bom = {
         num_batt_full,
         1,
         1,
-        '- '
+        '-'# FIX: Use np.nan instead of '- ' for numeric columns
     ],
     "Qty (Critical)": [
         num_panels_crit,
         num_batt_crit,
         1,
         1,
-        '- '
+        '-' # FIX: Use np.nan instead of '- ' for numeric columns
     ],
     "Notes": [
         "Verify Voc (Open Circuit Voltage) and optimize string configuration.",
@@ -369,8 +276,7 @@ st.dataframe(
             # Make the text visible without truncation
             help="Technical specifications and installation checks.")
     }
-)
-
+) 
 
 # Apply the sanitizer to the relevant columns of the BOM DataFrame before export
 bom_df_sanitized = bom_df.copy()
@@ -380,7 +286,6 @@ csv = bom_df_sanitized.to_csv(index=False).encode("utf-8")
 st.download_button("Download BOM CSV", data=csv, file_name="solar_bom_full.csv", mime="text/csv")
 
 st.markdown("---")
-
 
 # ---------------------------
 # 5) PDF / Spec Sheet Export
@@ -400,132 +305,6 @@ if show_chart:
 
 st.markdown("---")
 
-
-# --- PDF generator function ---
-def generate_pdf(loads_df, summary_lines, bom_df, chart_image_bytes): 
-    """
-    Generate a PDF summary report including the chart image of Energy Consumption Appliances.
-    """
-
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # Header
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Smart Solar System Sizing Report", ln=True, align="C")
-
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, "", ln=True) # Blank line
-
-    # --- CHART EMBEDDING SECTION ---
-    if chart_image_bytes:
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "Load Consumption Chart:", ln=True)
-        pdf.cell(0, 5, "", ln=True)
-        
-        # Prepare BytesIO object for fpdf.image
-        img_io = io.BytesIO(chart_image_bytes)
-        
-        # image placement and size (140mm width, centered)
-        image_w = 140
-        x_center = (pdf.w - image_w) / 2
-        
-        # Image type is explicitly set to JPEG for clarity.
-        pdf.image(img_io, x=x_center, w=image_w, type='JPEG')
-        pdf.cell(0, 5, "", ln=True) # Spacer after image
-        pdf.cell(0, 5, "", ln=True) 
-    
-    # --- SUMMARY SECTION ---
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "System Summary:", ln=True) 
-    
-    pdf.set_font("Arial", "", 12)
-    
-    for line in summary_lines:
-        pdf.cell(0, 8, sanitize_text(line), ln=True) 
-
-    pdf.cell(0, 10, "", ln=True)
-
-    # --- LOAD TABLE SECTION ---
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Appliance Load Summary:", ln=True)
-    pdf.set_font("Arial", "B", 11)
-    
-    # Table Header
-    pdf.cell(60, 8, "Appliance", 1)
-    pdf.cell(25, 8, "Power (W)", 1)
-    pdf.cell(20, 8, "Qty", 1)
-    pdf.cell(30, 8, "Hours/day", 1)
-    pdf.cell(30, 8, "Energy (Wh)", 1)
-    pdf.cell(25, 8, "Critical", 1, ln=True)
-
-    pdf.set_font("Arial", "", 11)
-    for _, row in loads_df.iterrows():
-        pdf.cell(60, 8, sanitize_text(row.get("name", "")), 1)
-        pdf.cell(25, 8, sanitize_text(f"{row.get('power_w', 0.0):.1f}"), 1) 
-        pdf.cell(20, 8, sanitize_text(str(int(row.get('qty', 0)))), 1)        
-        pdf.cell(30, 8, sanitize_text(f"{row.get('hours_per_day', 0.0):.1f}"), 1) 
-        pdf.cell(30, 8, sanitize_text(f"{round(row.get('energy_wh', 0), 0):.0f}"), 1) 
-        pdf.cell(25, 8, sanitize_text(str(row.get("critical", ""))), 1, ln=True)
-
-    pdf.cell(0, 10, "", ln=True)
-
-    # --- Bill of Materials (BOM) Section ---
-    if bom_df is not None and not bom_df.empty:
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "Recommended Bill of Materials:", ln=True)
-        pdf.set_font("Arial", "B", 11)
-        
-        # Define column widths 
-        w_item, w_qty_f, w_qty_c, w_notes = 60, 25, 30, 75
-        
-        # Draw the header row
-        pdf.cell(w_item, 8, "Item", 1)
-        pdf.cell(w_qty_f, 8, "Qty (Full)", 1)
-        pdf.cell(w_qty_c, 8, "Qty (Critical)", 1)
-        pdf.cell(w_notes, 8, "Notes", 1, ln=True)
-
-        pdf.set_font("Arial", "", 11)
-        
-        x_start = pdf.l_margin
-        
-        for _, row in bom_df.iterrows():
-            notes_text = sanitize_text(row.get("Notes", ""))
-            
-            y_start = pdf.get_y()
-            
-            # calculate required height in the notes column
-            pdf.set_xy(x_start + w_item + w_qty_f + w_qty_c, y_start) 
-            pdf.multi_cell(w_notes, 4, notes_text, 0, 'L') 
-            cell_height = pdf.get_y() - y_start
-            cell_height = max(8, cell_height) 
-            
-            # Draw cells 1-3
-            pdf.set_xy(x_start, y_start) 
-            pdf.cell(w_item, cell_height, sanitize_text(row.get("Item", "")), 1)
-            pdf.cell(w_qty_f, cell_height, sanitize_text(str(row.get("Qty (Full)", ""))), 1)
-            pdf.cell(w_qty_c, cell_height, sanitize_text(str(row.get("Qty (Critical)", ""))), 1)
-            
-            # Draw multi-line notes cell
-            pdf.set_xy(pdf.get_x(), y_start)
-            pdf.multi_cell(w_notes, 4, notes_text, 1, 'L', False)
-            
-            # Advance to the start of the next row
-            pdf.set_xy(x_start, y_start + cell_height) 
-
-
-    # --- Output as bytes (safe for all FPDF versions) ---
-    pdf_result = pdf.output(dest="S")
-
-    if isinstance(pdf_result, str):
-        pdf_bytes = pdf_result.encode("latin-1")
-    else:
-        pdf_bytes = bytes(pdf_result)
-
-    return pdf_bytes
-
-
 # PREPARE SUMMARY LINES
 summary_lines = [
     f"System Voltage: {system_voltage} V",
@@ -536,8 +315,9 @@ summary_lines = [
     f"Charge Controller current: {controller_current} A"
 ]
 
-
+# Generate PDF (use the function in pdf_generator.py file)
 pdf_bytes = generate_pdf(loads, summary_lines, bom_df, chart_image_bytes)
 st.download_button("Download Spec Sheet (PDF)", data=pdf_bytes, file_name="solar_spec_full.pdf", mime="application/pdf")
 
 st.success("✅ All done. Use the BOM table, tweak as needed, and hand the spec sheet to installers or vendors.")
+ 
