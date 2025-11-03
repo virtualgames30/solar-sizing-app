@@ -1,2 +1,7 @@
 .vscode
 .vscode/settings.json
+
+model/__pycache__/utils.cpython-313.pyc
+model/__pycache__/pdf_generator.cpython-313.pyc
+
+model/backup.py
