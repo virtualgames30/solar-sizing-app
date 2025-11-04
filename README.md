@@ -1,159 +1,72 @@
+Smart Solar System Sizing Calculator (Streamlit + Python)<!-- BADGES for a professional look -->⚡ Concept OverviewThe Smart Solar System Sizing Calculator is an intelligent, engineering-focused tool built with Python and Streamlit to help homeowners, engineers, and technicians design an optimal solar energy system. It accurately computes component requirements based on detailed load analysis and user preferences.The application enables users to input:A list of appliances (e.g., TV, fan, refrigerator) with their power rating (Watts) and usage duration (hours/day).A flag to designate whether each appliance is critical (essential for backup during power outages).System specifications like battery type (Lithium, Tubular, Lead Acid), preferred solar panel size (e.g., 400W), system voltage (12V, 24V, or 48V), and average sun hours per day.After computation, the system provides:Total daily energy consumption (Wh/day).Required PV (Photovoltaic) capacity (W) and number of panels.Suggested number and size of batteries (Ah).Recommended inverter rating (W).Charge controller capacity (A).A component summary and graphical visualization of energy usage.🧠 The Design Idea: An AI-like Sizing AssistantThe system functions as a transparent, AI-like solar design assistant, instantly showing how different choices affect the system sizing:Battery TypeKey Assumptions Used in CalculationLithiumHigh efficiency (≈ 95%) and deep discharge (DoD ≈ 90%).Lead-Acid/TubularStandard efficiency (≈ 80%) and conservative discharge (DoD ≈ 50%).The calculation engine also factors in Solar Panel Efficiency, a Derating Factor (to account for real-world losses), and Peak Sun Hours (PSH) for accurate sizing.🛠️ The Critical Load FeatureThe "Critical Flag" allows users to define essential devices that must operate during outages (like lights, routers, or medical devices).🎯 Daily Energy Consumption for Critical Loads ($E_{\text{critical}}$)When the flag is selected, the calculator filters these loads to perform a separate sizing calculation for a smaller "Critical Load (Backup) System."The calculation logic uses pandas to filter and sum only the required energy:E_critical = loads.loc[loads["critical"], "energy_wh"].sum()
+This resulting variable, $E_{\text{critical}}$, represents the total daily energy (Wh/day) required for backup-essential devices. By definition, $E_{\text{critical}} \leq E_{\text{total}}$.What the Critical Flag Does Not AffectFull System Sizing: The main system sizing is based on $E_{\text{total}}$ (the sum of all loads).Inverter Sizing: The inverter rating is determined by the total instantaneous wattage and startup surge and must always handle the potential maximum total load.The feature provides a secondary, smaller, and more cost-effective system design specifically for powering essential items during outages.📋 Step-by-Step Functionality1. User Input and Data CollectionUsers populate a dynamic table with appliance details and select system parameters via Streamlit widgets.2. Computation EngineThe system uses fundamental solar engineering equations for deterministic and transparent results.1. Daily Energy Consumption (Wh) $$\text{E}_{\text{Total}} = \sum(\text{Power} \times \text{Hours})$$
+*(Description: Total energy used per day by all appliances.)*
 
----
+**2. Required Battery Capacity (Ah)** $$
+\text{Ah}_{\text{Req}} = \frac{\text{E}_{\text{Total}} \times \text{Autonomy Days}}{\text{V}_{\text{System}} \times \text{DoD} \times \eta_{\text{Battery}}}
+$$*(Description: Determines the total storage requirement based on voltage, depth of discharge, and battery efficiency.)*
 
-````markdown
-# Smart Solar System Sizing Calculator (Streamlit + Python)
+**3. Required Solar Panel Power (W)** $$
+\text{PV}*{\text{Req}} = \frac{\text{E}*{\text{Total}}}{\text{PSH} \times \eta\_{\text{Panel}} \times \text{Derating Factor}} \times \text{Safety Factor}
 
----
+$$*(Description: Calculates the required panel array size considering sun hours and system losses.)*
 
-## Concept Overview
+**4. Inverter Size (W)** $$
+\text{Inverter}*{\text{Size}} = 1.3 \times \text{P}*{\text{Max Load}}
+$$*(Description: Adds a 30% safety margin to the maximum instantaneous load for startup surges.)*
 
-The **Smart Solar System Sizing Calculator** is an intelligent tool built with **Python and Streamlit** to help homeowners, engineers, and technicians design an optimal solar energy system based on their appliance load requirements and preferences.  
+**Key Abbreviations:**
 
-It enables users to input:
+| **Abbreviation** | **Meaning** |
+| :--- | :--- |
+| **Wh** | Watt-hour |
+| **Ah** | Amp-hour |
+| **DoD** | Depth of Discharge |
+| **PV** | Photovoltaic (solar panel system) |
+| **PSH** | Peak Sun Hours |
 
-- A list of appliances (e.g., TV, fan, refrigerator, laptop)
-- The **power rating (Watts)** and **usage duration (hours/day)** of each appliance  
-- Whether each appliance is **critical** (i.e., essential for backup during power outages)  
-- The **battery type** (Lithium, Tubular, Lead Acid, etc.)  
-- The **preferred solar panel size** (e.g., 300W, 400W, 550W)  
-- The **system voltage** (12V, 24V, or 48V)  
-- The **average sun hours per day**
+### 3\. Visualization
 
-After submission, the calculator performs a full energy audit and sizing computation to recommend:
+A **horizontal bar chart** is generated to display the **top 5 appliances** with the highest daily energy consumption (Wh/day). This visualization aids users in quickly identifying major energy consumers and potential areas for energy optimization.
 
-1. Total daily energy consumption (Wh/day)
-2. Required solar panel capacity (W)
-3. Suggested number and size of batteries
-4. Recommended inverter rating (W)
-5. Charge controller capacity (A)
-6. Component summary and graphical visualization of energy usage per load
+### 4\. Recommendations & BOM Generation
 
----
+The system outputs a detailed Bill of Materials (BOM) summary for both the Full System and the Critical Load System:
 
-## The Design Idea
+| **Component** | **Suggested Specification** | **Quantity** |
+| :--- | :--- | :--- |
+| Solar Panel | 400W Monocrystalline | 5 |
+| Battery | 200Ah Lithium | 2 |
+| Inverter | 3.5 kVA | 1 |
+| Charge Controller | 60A MPPT | 1 |
 
-The system functions as an **AI-like solar design assistant**. It shows how different design choices affect system sizing.  
+## 📐 Technical Architecture
 
-For instance:
+| **Layer** | **Purpose** | **Tools** |
+| :--- | :--- | :--- |
+| **Frontend/UI** | Interactive input forms and visualization | Streamlit |
+| **Computation Logic** | Load analysis and system sizing | Python, pandas |
+| **Visualization** | Energy consumption plots | Matplotlib |
+| **PDF Report** | PDF summary and BOM generation | FPDF |
+| **Future Add-ons** | AI-based cost optimization | OpenAI / ML Integration |
 
-- If you mark a load as **non-critical**, it’s excluded from backup sizing.  
-- If you select **Lithium** batteries, the tool assumes:
-  - Higher efficiency ≈ 95%
-  - Deeper discharge (DoD ≈ 90%)
-- If you choose **Lead-Acid**, it assumes:
-  - DoD ≈ 50%
-  - Efficiency ≈ 80%
+## 🚀 Get Started
 
-It also factors in:
-- Solar panel efficiency
-- Derating factor (to account for losses)
-- Sunlight hours (PSH – Peak Sun Hours)
+1.  **Clone the repository:**
 
----
+    ```bash
+    git clone [https://github.com/virtualgames30/solar-sizing-app.git](https://github.com/virtualgames30/solar-sizing-app.git)
+    cd solar-sizing-app
+    ```
 
-## Impact of Ticking a Load as “Critical”
+2.  **Install dependencies:**
 
-The Critical Flag allows users to identify essential devices that must remain operational during outages or backup operation (e.g., lights, routers).
-When selected, the calculator filters these loads and performs a separate sizing calculation for a smaller “Critical Load (Backup) System".
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-### Daily Energy Consumption for Critical Loads (E₍critical₎)
-- **How it works:**  
-  The calculator filters loads using  
-  ```python
-  E_critical = loads.loc[loads["critical"], "energy_wh"].sum()
-````
+3.  **Run the application:**
 
-This sums only the energy (Wh/day) of appliances marked as *critical = True*.
-
-* **Impact:**
-  This creates the variable **E₍critical₎**, representing the total daily energy required for backup-essential devices.
-  By definition, **E₍critical₎ ≤ E₍total₎**.
-
-### What It Does *Not* Affect
-
-* **Full System Sizing:** Based solely on E₍total₎ (sum of all loads).
-* **Inverter Sizing:** Determined by total instantaneous wattage and startup surge — unaffected by critical flags. The inverter must always handle the maximum total load, regardless of critical status, since all appliances could potentially be used at once.
-* **Charge Controller:** Sized based on full PV capacity (PV₍full₎).
-
-**In summary:**
-The feature provides a secondary, typically smaller, and more cost-effective system design for powering essential items (lights, routers, fans, etc.) during outages.
-
----
-
-## Step-by-Step Functionality
-
-### 1. User Input
-
-* Add appliances (name, wattage, hours/day, and critical load toggle)
-* Choose:
-
-  * Battery type
-  * Solar panel size
-  * System voltage
-  * Sun hours/day
-
-### 2. Computation Engine
-
-Uses fundamental solar engineering equations:
-
-| Formula                                                                                                 | Description                              |
-| ------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **Daily Energy Consumption (Wh)** = Σ(Power × Hours)                                                    | Total energy used per day                |
-| **Required Battery Capacity (Ah)** = Total Load (Wh) / (System Voltage × DoD × Efficiency)              | Determines storage requirement           |
-| **Number of Batteries** = Required Capacity (Ah) / Selected Battery Rating (Ah)                         | Calculates how many batteries are needed |
-| **Required Solar Panel Power (W)** = Total Load (Wh) / (Sun Hours × Panel Efficiency × Derating Factor) | Calculates panel size                    |
-| **Inverter Size (W)** = 1.3 × Total Load (W)                                                            | Adds 30% safety margin for surges        |
-
-**Abbreviations Used:**
-
-* **Wh** – Watt-hour
-* **Ah** – Amp-hour
-* **DoD** – Depth of Discharge
-* **PV** – Photovoltaic (solar panel system)
-* **PSH** – Peak Sun Hours
-
-### 3. Visualization
-
-A **horizontal bar chart** displays the **top 5 appliances** with the highest daily energy consumption (Wh/day).
-This helps users quickly identify which appliances contribute most to total energy demand and where energy savings or optimization may be achieved.
-
-### 4. Recommendations
-
-After computing, the system displays:
-
-| Component         | Suggested Specification | Quantity |
-| ----------------- | ----------------------- | -------- |
-| Solar Panel       | 400W Monocrystalline    | 5        |
-| Battery           | 200Ah Lithium           | 2        |
-| Inverter          | 3.5 kVA                 | 1        |
-| Charge Controller | 60A MPPT                | 1        |
-
----
-
-## Technical Architecture
-
-| Layer                  | Purpose                                   | Tools                   |
-| ---------------------- | ----------------------------------------- | ----------------------- |
-| **Frontend/UI**        | Interactive input forms and visualization | Streamlit               |
-| **Computation Logic**  | Load analysis and system sizing           | Python, pandas          |
-| **Data Handling**      | Appliance and spec data                   | CSV/JSON                |
-| **Visualization**      | Energy consumption plots                  | Matplotlib              |
-| **PDF Report**         | PDF summary generation                    | FPDF                    |
-| **Future Add-ons**     | AI-based cost optimization                | OpenAI / ML Integration |
-
----
-
-## Summary
-
-The **Smart Solar System Sizing Calculator** is a transparent, educational, and practical tool that transforms traditional manual solar sizing into an automated visually interactive experience.
-
-It empowers users to:
-
-* Understand their daily energy profile
-* Compare full-load vs critical-load systems
-* Visualize top energy-consuming appliances
-
----
-
-````
+    ```bash
+    streamlit run streamlit_app.py
+    ```$$
